@@ -2,13 +2,16 @@
 from django.db import models
 from .exception.exceptions import NoTripAvailableException, TripNotStartedException
 
+
 class Location(models.Model):
     x = models.FloatField()
     y = models.FloatField()
 
-    def calcDistance(self, locationA, locationB):
-        x1, y1 = locationA.x, locationA.y
-        x2, y2 = locationB.x, locationB.y
+    @staticmethod
+    def calc_distance(location_a, location_b):
+        """Calculate Euclidean distance between two locations."""
+        x1, y1 = location_a.x, location_a.y
+        x2, y2 = location_b.x, location_b.y
         return ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
 
     def __str__(self):
@@ -20,109 +23,38 @@ class Rider(models.Model):
     location = models.ForeignKey(Location, on_delete=models.CASCADE, null=True, blank=True)
     rides = models.ManyToManyField('Trip', blank=True, related_name='riders')
 
-    def get_id(self):
+    @property
+    def rider_id(self):
         return self.id
 
-    def get_name(self):
+    @property
+    def rider_name(self):
         return self.name
 
-    def get_location(self):
+    @property
+    def rider_location(self):
         return self.location
 
-    def get_rides(self):
+    @property
+    def rider_rides(self):
         return self.rides.all()
 
-    def set_location(self, location):
+    def update_location(self, location):
+        """Update rider's location with validation."""
         if not isinstance(location, Location):
-            raise ValueError("location must be a Location instance")
+            raise ValueError("Location must be a Location instance.")
         self.location = location
         self.save()
 
     def __str__(self):
         return f"Rider({self.name})"
+    
 
-
-class Cab(models.Model):
-    cab_number = models.CharField(max_length=20, unique=True)
-    driver_name = models.CharField(max_length=100)
-    availability = models.BooleanField(default=True)
-    location = models.ForeignKey(Location, on_delete=models.CASCADE, null=True, blank=True)
-
-    def get_id(self):
-        return self.id
-
-    def get_cab_number(self):
-        return self.cab_number
-
-    def get_driver_name(self):
-        return self.driver_name
-
-    def get_location(self):
-        return self.location
-
-    def get_availability(self):
-        return self.availability
-
-    def set_location(self, location):
-        if not isinstance(location, Location):
-            raise ValueError("location must be a Location instance")
-        self.location = location
-        self.save()
-
-    def set_availability(self, availability):
-        if not isinstance(availability, bool):
-            raise ValueError("availability must be a bool")
-        self.availability = availability
-        self.save()
-
-    def __str__(self):
-        return f"Cab({self.cab_number}, {self.driver_name})"
-
-
-class Trip(models.Model):
-    rider = models.ForeignKey(Rider, on_delete=models.CASCADE)
-    cab = models.ForeignKey(Cab, on_delete=models.CASCADE)
-    trip_status = models.CharField(
-        max_length=20,
-        choices=[('IN_PROCESS', 'In Process'), ('ENDED', 'Ended')],
-        default='IN_PROCESS'
-    )
-
-    def get_rider(self):
-        return self.rider
-
-    def get_cab(self):
-        return self.cab
-
-    def get_trip_status(self):
-        return self.trip_status
-
-    def set_trip_status(self, status):
-        if status not in ['IN_PROCESS', 'ENDED']:
-            raise ValueError("Invalid trip status")
-        self.trip_status = status
-        self.save()
-
-    def create_trip(self, rider, cab):
-        trip = Trip.objects.create(rider=rider, cab=cab)
-        cab.set_availability(False)
-        return trip
-
-    def end_trip(self):
-        if self.trip_status != 'IN_PROCESS':
-            raise TripNotStartedException()
-        self.set_trip_status('ENDED')
-        self.cab.set_availability(True)
-
-    def __str__(self):
-        return f"Trip({self.rider.name} with {self.cab.cab_number})"
-
-
-# Custom manager for booking-related logic (replaces CabBooking class)
 class CabBookingManager(models.Manager):
-    def get_available_cabs_for_rider(self, rider):
+    def get_nearest_available_cab(self, rider):
+        """Find the nearest available cab within max distance."""
         if not rider.location:
-            raise ValueError("Rider has no location set")
+            raise ValueError("Rider has no location set.")
 
         max_distance = 10.0
         available_cabs = self.filter(availability=True)
@@ -131,7 +63,7 @@ class CabBookingManager(models.Manager):
 
         for cab in available_cabs:
             if cab.location:
-                dist = Location().calcDistance(rider.location, cab.location)
+                dist = Location.calc_distance(rider.location, cab.location)
                 if dist <= max_distance and dist < min_dist:
                     min_dist = dist
                     nearest_cab = cab
@@ -142,5 +74,100 @@ class CabBookingManager(models.Manager):
         return nearest_cab
 
 
-# Attach the custom manager to Cab
-Cab.objects = CabBookingManager()
+class Cab(models.Model):
+    cab_number = models.CharField(max_length=20, unique=True)
+    driver_name = models.CharField(max_length=100)
+    availability = models.BooleanField(default=True)
+    location = models.ForeignKey(Location, on_delete=models.CASCADE, null=True, blank=True)
+
+    objects = CabBookingManager()
+
+    @property
+    def cab_id(self):
+        return self.id
+
+    @property
+    def cab_cab_number(self):
+        return self.cab_number
+
+    @property
+    def cab_driver_name(self):
+        return self.driver_name
+
+    @property
+    def cab_location(self):
+        return self.location
+
+    @property
+    def is_available(self):
+        return self.availability
+
+    def update_location(self, location):
+        """Update cab's location with validation."""
+        if not isinstance(location, Location):
+            raise ValueError("Location must be a Location instance.")
+        self.location = location
+        self.save()
+
+    def update_availability(self, availability):
+        """Update cab's availability with validation."""
+        if not isinstance(availability, bool):
+            raise ValueError("Availability must be a boolean.")
+        self.availability = availability
+        self.save()
+
+    def __str__(self):
+        return f"Cab({self.cab_number}, {self.driver_name})"
+
+
+class Trip(models.Model):
+    IN_PROCESS = 'IN_PROCESS'
+    ENDED = 'ENDED'
+    TRIP_STATUS_CHOICES = [
+        (IN_PROCESS, 'In Process'),
+        (ENDED, 'Ended'),
+    ]
+
+    rider = models.ForeignKey(Rider, on_delete=models.CASCADE)
+    cab = models.ForeignKey(Cab, on_delete=models.CASCADE)
+    trip_status = models.CharField(
+        max_length=20,
+        choices=TRIP_STATUS_CHOICES,
+        default=IN_PROCESS
+    )
+
+    @property
+    def trip_rider(self):
+        return self.rider
+
+    @property
+    def trip_cab(self):
+        return self.cab
+
+    @property
+    def status(self):
+        return self.trip_status
+
+    def update_status(self, status):
+        """Update trip status with validation."""
+        if status not in dict(self.TRIP_STATUS_CHOICES):
+            raise ValueError("Invalid trip status.")
+        self.trip_status = status
+        self.save()
+
+    @classmethod
+    def create_trip(cls, rider, cab):
+        """Create a new trip and mark cab as unavailable."""
+        trip = cls.objects.create(rider=rider, cab=cab)
+        cab.update_availability(False)
+        return trip
+
+    def end_trip(self):
+        """End the trip if in process and make cab available."""
+        if self.trip_status != self.IN_PROCESS:
+            raise TripNotStartedException()
+        self.update_status(self.ENDED)
+        self.cab.update_availability(True)
+
+    def __str__(self):
+        return f"Trip({self.rider.name} with {self.cab.cab_number})"
